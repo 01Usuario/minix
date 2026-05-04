@@ -11,6 +11,7 @@
 #define EXTERN
 #endif
 
+
 #ifndef CONFIG_SMP
 #define CONFIG_MAX_CPUS 1
 #endif
@@ -30,6 +31,7 @@ EXTERN struct schedproc {
 	unsigned priority;		/* the process' current priority */
 	unsigned time_slice;		/* this process's time slice */
 	unsigned cpu;		/* what CPU is the process running on */
+	unsigned quantum_count;
 	bitchunk_t cpu_mask[BITMAP_CHUNKS(CONFIG_MAX_CPUS)]; /* what CPUs is the
 								process allowed
 								to run on */

@@ -43,6 +43,8 @@ static int schedule_process(struct schedproc * rmp, unsigned flags);
 /* processes created by RS are sysytem processes */
 #define is_system_proc(p)	((p)->parent == RS_PROC_NR)
 
+#define MAX_QUANTUM_COUNT 3 /* antes de penalizar*/
+
 static unsigned cpu_proc[CONFIG_MAX_CPUS];
 
 static void pick_cpu(struct schedproc * proc)
@@ -86,24 +88,31 @@ static void pick_cpu(struct schedproc * proc)
 
 int do_noquantum(message *m_ptr)
 {
-	register struct schedproc *rmp;
-	int rv, proc_nr_n;
+        register struct schedproc *rmp;
+        int rv, proc_nr_n;
 
-	if (sched_isokendpt(m_ptr->m_source, &proc_nr_n) != OK) {
-		printf("SCHED: WARNING: got an invalid endpoint in OOQ msg %u.\n",
-		m_ptr->m_source);
-		return EBADEPT;
-	}
+        if (sched_isokendpt(m_ptr->m_source, &proc_nr_n) != OK) {
+                printf("SCHED: WARNING: got an invalid endpoint in OOQ msg %u.\n",
+                m_ptr->m_source);
+                return EBADEPT;
+        }
 
-	rmp = &schedproc[proc_nr_n];
-	if (rmp->priority < MIN_USER_Q) {
-		rmp->priority += 1; /* lower priority */
-	}
+        rmp = &schedproc[proc_nr_n];
 
-	if ((rv = schedule_process_local(rmp)) != OK) {
-		return rv;
-	}
-	return OK;
+        /* Incrementar contador de quantums agotados en esta ventana */
+        rmp->quantum_count++;
+
+        /* Si agotó N quantums completos en esta ventana, penalizar */
+        if (rmp->quantum_count >= MAX_QUANTUM_COUNT) {
+                if (rmp->priority < MIN_USER_Q) {
+                        rmp->priority += 1; /* bajar prioridad */
+                }
+        }
+
+        if ((rv = schedule_process_local(rmp)) != OK) {
+                return rv;
+        }
+        return OK;
 }
 
 /*===========================================================================*
@@ -173,6 +182,7 @@ int do_start_scheduling(message *m_ptr)
 		   process scheduled, and the parent of itself. */
 		rmp->priority   = USER_Q;
 		rmp->time_slice = DEFAULT_USER_TIME_SLICE;
+		rmp->quantum_count = 0;
 
 		/*
 		 * Since kernel never changes the cpu of a process, all are
@@ -352,18 +362,23 @@ void init_scheduling(void)
  */
 void balance_queues(void)
 {
-	struct schedproc *rmp;
-	int r, proc_nr;
+        struct schedproc *rmp;
+        int r, proc_nr;
 
-	for (proc_nr=0, rmp=schedproc; proc_nr < NR_PROCS; proc_nr++, rmp++) {
-		if (rmp->flags & IN_USE) {
-			if (rmp->priority > rmp->max_priority) {
-				rmp->priority -= 1; /* increase priority */
-				schedule_process_local(rmp);
-			}
-		}
-	}
+        for (proc_nr=0, rmp=schedproc; proc_nr < NR_PROCS; proc_nr++, rmp++) {
+                if (rmp->flags & IN_USE) {
+                        if (rmp->quantum_count == 0) {
+                                /* recuperar prioridad */
+                                if (rmp->priority > rmp->max_priority) {
+                                        rmp->priority -= 1;
+                                        schedule_process_local(rmp);
+                                }
+                        }
+                        /* reiniciar contador para la siguiente ventana */
+                        rmp->quantum_count = 0;
+                }
+        }
 
-	if ((r = sys_setalarm(balance_timeout, 0)) != OK)
-		panic("sys_setalarm failed: %d", r);
+        if ((r = sys_setalarm(balance_timeout, 0)) != OK)
+                panic("sys_setalarm failed: %d", r);
 }
